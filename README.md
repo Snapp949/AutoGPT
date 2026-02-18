@@ -4,7 +4,18 @@
 [![Twitter Follow](https://img.shields.io/twitter/follow/Auto_GPT?style=social)](https://twitter.com/Auto_GPT) &ensp;
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**AutoGPT** is a powerful platform that allows you to create, deploy, and manage continuous AI agents that automate complex workflows. 
+**AutoGPT** is a powerful platform that allows you to create, deploy, and manage continuous AI agents that automate complex workflows.
+
+## 🤖 Autonomous Repository Monitoring
+
+This repository features **automated issue detection, performance optimization, and continuous monitoring** powered by intelligent agents:
+
+- ✅ **Automated Issue Detection**: CodeQL, Pylint, ESLint, and Trivy continuously scan for bugs, security vulnerabilities, and code quality issues
+- ⚡ **Performance Profiling**: Daily performance monitoring and bottleneck detection with automated reports
+- 🔧 **Auto-Fix Suggestions**: Automated code quality improvements with PR generation
+- 📊 **Continuous Monitoring**: Daily health checks, test coverage analysis, and code quality trend tracking
+
+📖 [Learn more about automation capabilities](AUTOMATION.md) 
 
 ## Hosting Options 
    - Download to self-host
