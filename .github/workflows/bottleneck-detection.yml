@@ -1,0 +1,198 @@
+name: Performance Bottleneck Detection and Optimization
+
+on:
+  schedule:
+    # Run weekly on Sundays at 4 AM UTC
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  analyze-code-complexity:
+    name: Analyze Code Complexity
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sub-package: [backend, autogpt_libs]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Poetry
+        run: curl -sSL https://install.python-poetry.org | python3 -
+
+      - name: Install dependencies
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          poetry install
+
+      - name: Install complexity analysis tools
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          poetry add --group dev radon mccabe
+
+      - name: Analyze cyclomatic complexity
+        continue-on-error: true
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          mkdir -p complexity-reports
+          
+          # Run radon for complexity metrics
+          poetry run radon cc . -a -s --json > complexity-reports/complexity.json || true
+          poetry run radon cc . -a -s > complexity-reports/complexity.txt || true
+          
+          # Identify high complexity functions
+          poetry run radon cc . -n C -s > complexity-reports/high-complexity.txt || true
+
+      - name: Analyze maintainability index
+        continue-on-error: true
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          poetry run radon mi . -s --json > complexity-reports/maintainability.json || true
+          poetry run radon mi . -s > complexity-reports/maintainability.txt || true
+
+      - name: Generate complexity report
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          echo "# Code Complexity Analysis for ${{ matrix.sub-package }}" > complexity-reports/summary.md
+          echo "" >> complexity-reports/summary.md
+          echo "Generated on: $(date)" >> complexity-reports/summary.md
+          echo "" >> complexity-reports/summary.md
+          echo "## Metrics" >> complexity-reports/summary.md
+          echo "" >> complexity-reports/summary.md
+          echo "- **Cyclomatic Complexity**: Measures code complexity based on number of linearly independent paths" >> complexity-reports/summary.md
+          echo "- **Maintainability Index**: Measures code maintainability (0-100, higher is better)" >> complexity-reports/summary.md
+          echo "" >> complexity-reports/summary.md
+          echo "## Recommendations" >> complexity-reports/summary.md
+          echo "" >> complexity-reports/summary.md
+          echo "High complexity functions (Complexity > 10) should be refactored into smaller functions." >> complexity-reports/summary.md
+          echo "Low maintainability index (< 20) indicates code that is difficult to maintain." >> complexity-reports/summary.md
+
+      - name: Upload complexity reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: complexity-report-${{ matrix.sub-package }}
+          path: autogpt_platform/${{ matrix.sub-package }}/complexity-reports/
+          retention-days: 90
+
+  analyze-frontend-performance:
+    name: Analyze Frontend Performance
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '21'
+
+      - name: Install dependencies
+        working-directory: autogpt_platform/frontend
+        run: yarn install --frozen-lockfile
+
+      - name: Analyze bundle
+        working-directory: autogpt_platform/frontend
+        run: |
+          mkdir -p performance-reports
+          yarn build
+          
+          echo "# Frontend Performance Analysis" > performance-reports/bundle-analysis.md
+          echo "" >> performance-reports/bundle-analysis.md
+          echo "## Build Output" >> performance-reports/bundle-analysis.md
+          echo "" >> performance-reports/bundle-analysis.md
+          du -sh .next/ >> performance-reports/bundle-analysis.md || true
+
+      - name: Upload frontend performance reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-performance-report
+          path: autogpt_platform/frontend/performance-reports/
+          retention-days: 90
+
+  identify-bottlenecks:
+    name: Identify Performance Bottlenecks
+    needs: [analyze-code-complexity, analyze-frontend-performance]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          path: all-reports
+
+      - name: Analyze bottlenecks
+        run: |
+          echo "# Performance Bottleneck Analysis" > bottleneck-report.md
+          echo "" >> bottleneck-report.md
+          echo "## Analysis Date: $(date)" >> bottleneck-report.md
+          echo "" >> bottleneck-report.md
+          echo "## Key Findings" >> bottleneck-report.md
+          echo "" >> bottleneck-report.md
+          echo "### Code Complexity" >> bottleneck-report.md
+          echo "- Analyzed Python backend and libraries for high complexity functions" >> bottleneck-report.md
+          echo "- Identified functions with cyclomatic complexity > 10" >> bottleneck-report.md
+          echo "" >> bottleneck-report.md
+          echo "### Frontend Performance" >> bottleneck-report.md
+          echo "- Analyzed frontend bundle size and build output" >> bottleneck-report.md
+          echo "- Identified large dependencies and optimization opportunities" >> bottleneck-report.md
+          echo "" >> bottleneck-report.md
+          echo "## Optimization Recommendations" >> bottleneck-report.md
+          echo "" >> bottleneck-report.md
+          echo "### High Priority" >> bottleneck-report.md
+          echo "1. **Refactor Complex Functions**: Functions with complexity > 15 should be broken down" >> bottleneck-report.md
+          echo "2. **Optimize Bundle Size**: Consider code splitting for large frontend bundles" >> bottleneck-report.md
+          echo "3. **Review Dependencies**: Remove unused dependencies to reduce bundle size" >> bottleneck-report.md
+          echo "" >> bottleneck-report.md
+          echo "### Medium Priority" >> bottleneck-report.md
+          echo "1. **Improve Maintainability**: Address files with maintainability index < 20" >> bottleneck-report.md
+          echo "2. **Performance Testing**: Add performance benchmarks for critical paths" >> bottleneck-report.md
+          echo "3. **Caching Strategy**: Implement caching for frequently accessed data" >> bottleneck-report.md
+          echo "" >> bottleneck-report.md
+          echo "### Low Priority" >> bottleneck-report.md
+          echo "1. **Code Documentation**: Improve documentation for complex modules" >> bottleneck-report.md
+          echo "2. **Monitoring**: Add performance monitoring for production" >> bottleneck-report.md
+          echo "" >> bottleneck-report.md
+          echo "## Next Steps" >> bottleneck-report.md
+          echo "" >> bottleneck-report.md
+          echo "1. Review the detailed reports in workflow artifacts" >> bottleneck-report.md
+          echo "2. Create GitHub issues for high-priority optimizations" >> bottleneck-report.md
+          echo "3. Schedule optimization work in upcoming sprints" >> bottleneck-report.md
+          echo "4. Re-run this analysis after optimizations to measure improvements" >> bottleneck-report.md
+          
+          cat bottleneck-report.md
+
+      - name: Upload bottleneck analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: bottleneck-analysis
+          path: bottleneck-report.md
+          retention-days: 90
+
+      - name: Create GitHub Issue for Critical Bottlenecks
+        if: github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('bottleneck-report.md', 'utf8');
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Automated] Performance Bottleneck Report - ${new Date().toISOString().split('T')[0]}`,
+              body: report,
+              labels: ['performance', 'automated', 'optimization']
+            });

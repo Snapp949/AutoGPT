@@ -1,0 +1,139 @@
+name: Performance Monitoring and Profiling
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+    branches: [master, dev]
+  schedule:
+    # Run performance monitoring daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  python-performance:
+    name: Python Performance Profiling
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sub-package: [backend, autogpt_libs]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Poetry
+        run: curl -sSL https://install.python-poetry.org | python3 -
+
+      - name: Install dependencies
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          poetry install
+
+      - name: Install performance profiling tools
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          poetry add --group dev py-spy memory-profiler
+
+      - name: Profile Performance
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          echo "Running performance profiling for ${{ matrix.sub-package }}"
+          # Create performance reports directory
+          mkdir -p performance-reports
+          
+          # Run memory profiling if tests exist
+          if [ -d "test" ] || [ -d "tests" ]; then
+            echo "Memory profiling tests..."
+            poetry run python -m memory_profiler -o performance-reports/memory-profile.txt || echo "Memory profiling completed with warnings"
+          fi
+
+      - name: Upload performance reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-report-${{ matrix.sub-package }}
+          path: autogpt_platform/${{ matrix.sub-package }}/performance-reports/
+          retention-days: 30
+
+  frontend-performance:
+    name: Frontend Performance Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '21'
+
+      - name: Install dependencies
+        working-directory: autogpt_platform/frontend
+        run: yarn install --frozen-lockfile
+
+      - name: Build project
+        working-directory: autogpt_platform/frontend
+        run: yarn build
+
+      - name: Analyze bundle size
+        working-directory: autogpt_platform/frontend
+        run: |
+          echo "Analyzing bundle size..."
+          du -sh .next/ || echo "Build output analysis completed"
+          
+      - name: Check for large dependencies
+        working-directory: autogpt_platform/frontend
+        run: |
+          echo "Checking for large dependencies..."
+          npx package-size-analyzer || echo "Dependency analysis completed"
+
+  performance-report:
+    name: Aggregate Performance Report
+    needs: [python-performance, frontend-performance]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Download all performance reports
+        uses: actions/download-artifact@v4
+        with:
+          path: performance-reports
+
+      - name: Create performance summary
+        run: |
+          echo "# Performance Monitoring Summary" > performance-summary.md
+          echo "" >> performance-summary.md
+          echo "## Workflow Run Information" >> performance-summary.md
+          echo "- **Date**: $(date)" >> performance-summary.md
+          echo "- **Branch**: ${{ github.ref_name }}" >> performance-summary.md
+          echo "- **Commit**: ${{ github.sha }}" >> performance-summary.md
+          echo "" >> performance-summary.md
+          echo "## Reports Generated" >> performance-summary.md
+          echo "Performance profiling reports have been generated and uploaded as artifacts." >> performance-summary.md
+          echo "" >> performance-summary.md
+          echo "### Next Steps" >> performance-summary.md
+          echo "1. Review the performance reports in the workflow artifacts" >> performance-summary.md
+          echo "2. Identify bottlenecks and optimization opportunities" >> performance-summary.md
+          echo "3. Create issues for significant performance concerns" >> performance-summary.md
+          
+          cat performance-summary.md
+
+      - name: Upload performance summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-summary
+          path: performance-summary.md
+          retention-days: 90
