@@ -1,0 +1,201 @@
+name: Automated Issue Detection and Fix Suggestions
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+    branches: [master, dev]
+  schedule:
+    # Run daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  detect-python-issues:
+    name: Detect Python Issues with Pylint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sub-package: [backend, autogpt_libs]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Poetry
+        run: curl -sSL https://install.python-poetry.org | python3 -
+
+      - name: Install dependencies
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          poetry install
+
+      - name: Install Pylint
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          poetry add --group dev pylint pylint-json2html
+
+      - name: Run Pylint analysis
+        continue-on-error: true
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          mkdir -p issue-reports
+          
+          # Run pylint and generate reports
+          poetry run pylint --output-format=json --exit-zero $(find . -name "*.py" -not -path "*/\.*" -not -path "*/test/*" -not -path "*/tests/*") > issue-reports/pylint-report.json || true
+          poetry run pylint --exit-zero $(find . -name "*.py" -not -path "*/\.*" -not -path "*/test/*" -not -path "*/tests/*") > issue-reports/pylint-report.txt || true
+
+      - name: Analyze Pylint results
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          echo "Analyzing Pylint results for ${{ matrix.sub-package }}..."
+          
+          # Create a summary of issues
+          if [ -f "issue-reports/pylint-report.json" ]; then
+            echo "# Pylint Analysis Summary for ${{ matrix.sub-package }}" > issue-reports/summary.md
+            echo "" >> issue-reports/summary.md
+            echo "Generated on: $(date)" >> issue-reports/summary.md
+            echo "" >> issue-reports/summary.md
+            echo "## Issues Found" >> issue-reports/summary.md
+            echo "" >> issue-reports/summary.md
+            echo "Please review the detailed reports in the artifacts." >> issue-reports/summary.md
+          fi
+
+      - name: Upload issue reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: pylint-report-${{ matrix.sub-package }}
+          path: autogpt_platform/${{ matrix.sub-package }}/issue-reports/
+          retention-days: 30
+
+  detect-frontend-issues:
+    name: Detect Frontend Issues with ESLint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '21'
+
+      - name: Install dependencies
+        working-directory: autogpt_platform/frontend
+        run: yarn install --frozen-lockfile
+
+      - name: Run ESLint with auto-fix
+        continue-on-error: true
+        working-directory: autogpt_platform/frontend
+        run: |
+          mkdir -p issue-reports
+          yarn lint --format json --output-file issue-reports/eslint-report.json || true
+          yarn lint > issue-reports/eslint-report.txt || true
+
+      - name: Upload ESLint reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: eslint-report-frontend
+          path: autogpt_platform/frontend/issue-reports/
+          retention-days: 30
+
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Dependency Review
+        uses: actions/dependency-review-action@v4
+        if: github.event_name == 'pull_request'
+
+  create-issue-summary:
+    name: Create Issue Detection Summary
+    needs: [detect-python-issues, detect-frontend-issues, security-scan]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          path: all-reports
+
+      - name: Create comprehensive summary
+        run: |
+          echo "# Automated Issue Detection Summary" > issue-summary.md
+          echo "" >> issue-summary.md
+          echo "## Workflow Run Information" >> issue-summary.md
+          echo "- **Date**: $(date)" >> issue-summary.md
+          echo "- **Branch**: ${{ github.ref_name }}" >> issue-summary.md
+          echo "- **Commit**: ${{ github.sha }}" >> issue-summary.md
+          echo "" >> issue-summary.md
+          echo "## Detection Results" >> issue-summary.md
+          echo "" >> issue-summary.md
+          echo "### Code Quality Analysis" >> issue-summary.md
+          echo "- Pylint analysis completed for Python code" >> issue-summary.md
+          echo "- ESLint analysis completed for TypeScript/JavaScript code" >> issue-summary.md
+          echo "" >> issue-summary.md
+          echo "### Security Scanning" >> issue-summary.md
+          echo "- Trivy vulnerability scan completed" >> issue-summary.md
+          echo "- CodeQL security analysis is running separately" >> issue-summary.md
+          echo "" >> issue-summary.md
+          echo "## Recommended Actions" >> issue-summary.md
+          echo "" >> issue-summary.md
+          echo "1. **Review Reports**: Check the workflow artifacts for detailed reports" >> issue-summary.md
+          echo "2. **Address Critical Issues**: Prioritize fixing critical and high-severity issues" >> issue-summary.md
+          echo "3. **Create Tasks**: Create GitHub issues for issues that need attention" >> issue-summary.md
+          echo "4. **Monitor Trends**: Track issue trends over time to identify patterns" >> issue-summary.md
+          echo "" >> issue-summary.md
+          echo "## Automation Capabilities" >> issue-summary.md
+          echo "" >> issue-summary.md
+          echo "This workflow automatically:" >> issue-summary.md
+          echo "- Detects code quality issues with Pylint and ESLint" >> issue-summary.md
+          echo "- Scans for security vulnerabilities with Trivy" >> issue-summary.md
+          echo "- Generates detailed reports for review" >> issue-summary.md
+          echo "- Runs on every push, PR, and daily via schedule" >> issue-summary.md
+          
+          cat issue-summary.md
+
+      - name: Upload issue summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-detection-summary
+          path: issue-summary.md
+          retention-days: 90

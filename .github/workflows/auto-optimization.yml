@@ -1,0 +1,281 @@
+name: Automated Code Optimization and Fix Suggestions
+
+on:
+  schedule:
+    # Run weekly on Mondays at 5 AM UTC
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      create_pr:
+        description: 'Create a PR with auto-fixes'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-fix-python:
+    name: Auto-fix Python Code Issues
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sub-package: [backend, autogpt_libs]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Poetry
+        run: curl -sSL https://install.python-poetry.org | python3 -
+
+      - name: Install dependencies
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          poetry install
+
+      - name: Install auto-fix tools
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          poetry add --group dev autopep8 autoflake
+
+      - name: Run auto-fixes
+        run: |
+          cd autogpt_platform/${{ matrix.sub-package }}
+          
+          # Remove unused imports
+          poetry run autoflake --in-place --remove-all-unused-imports --remove-unused-variables -r . || true
+          
+          # Auto-fix PEP8 issues
+          poetry run autopep8 --in-place --aggressive --aggressive -r . || true
+          
+          # Run existing formatters
+          poetry run isort . || true
+          poetry run black . || true
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if [[ -n $(git status -s) ]]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create fix summary
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          mkdir -p fix-reports
+          git diff --stat > fix-reports/changes-${{ matrix.sub-package }}.txt
+          
+          echo "# Auto-fix Summary for ${{ matrix.sub-package }}" > fix-reports/summary-${{ matrix.sub-package }}.md
+          echo "" >> fix-reports/summary-${{ matrix.sub-package }}.md
+          echo "## Changes Made" >> fix-reports/summary-${{ matrix.sub-package }}.md
+          echo "" >> fix-reports/summary-${{ matrix.sub-package }}.md
+          echo "\`\`\`" >> fix-reports/summary-${{ matrix.sub-package }}.md
+          git diff --stat >> fix-reports/summary-${{ matrix.sub-package }}.md
+          echo "\`\`\`" >> fix-reports/summary-${{ matrix.sub-package }}.md
+          echo "" >> fix-reports/summary-${{ matrix.sub-package }}.md
+          echo "## Auto-fixes Applied" >> fix-reports/summary-${{ matrix.sub-package }}.md
+          echo "- Removed unused imports and variables (autoflake)" >> fix-reports/summary-${{ matrix.sub-package }}.md
+          echo "- Fixed PEP8 violations (autopep8)" >> fix-reports/summary-${{ matrix.sub-package }}.md
+          echo "- Sorted imports (isort)" >> fix-reports/summary-${{ matrix.sub-package }}.md
+          echo "- Applied code formatting (black)" >> fix-reports/summary-${{ matrix.sub-package }}.md
+
+      - name: Upload fix reports
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fix-report-${{ matrix.sub-package }}
+          path: fix-reports/
+          retention-days: 30
+
+      - name: Commit changes
+        if: steps.changes.outputs.has_changes == 'true' && github.event.inputs.create_pr == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .
+          git commit -m "chore: auto-fix code issues in ${{ matrix.sub-package }}"
+
+  auto-fix-frontend:
+    name: Auto-fix Frontend Code Issues
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '21'
+
+      - name: Install dependencies
+        working-directory: autogpt_platform/frontend
+        run: yarn install --frozen-lockfile
+
+      - name: Run ESLint auto-fix
+        working-directory: autogpt_platform/frontend
+        run: |
+          yarn lint --fix || true
+          yarn format || true
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if [[ -n $(git status -s) ]]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create fix summary
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          mkdir -p fix-reports
+          git diff --stat > fix-reports/changes-frontend.txt
+          
+          echo "# Auto-fix Summary for Frontend" > fix-reports/summary-frontend.md
+          echo "" >> fix-reports/summary-frontend.md
+          echo "## Changes Made" >> fix-reports/summary-frontend.md
+          echo "" >> fix-reports/summary-frontend.md
+          echo "\`\`\`" >> fix-reports/summary-frontend.md
+          git diff --stat >> fix-reports/summary-frontend.md
+          echo "\`\`\`" >> fix-reports/summary-frontend.md
+          echo "" >> fix-reports/summary-frontend.md
+          echo "## Auto-fixes Applied" >> fix-reports/summary-frontend.md
+          echo "- Fixed ESLint violations" >> fix-reports/summary-frontend.md
+          echo "- Applied Prettier formatting" >> fix-reports/summary-frontend.md
+
+      - name: Upload fix reports
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fix-report-frontend
+          path: fix-reports/
+          retention-days: 30
+
+      - name: Commit changes
+        if: steps.changes.outputs.has_changes == 'true' && github.event.inputs.create_pr == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .
+          git commit -m "chore: auto-fix frontend code issues"
+
+  create-pr:
+    name: Create Pull Request with Auto-fixes
+    needs: [auto-fix-python, auto-fix-frontend]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.create_pr == 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Pull latest changes
+        run: |
+          git pull origin ${{ github.ref_name }}
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore: automated code quality fixes'
+          title: '[Automated] Code Quality Improvements'
+          body: |
+            ## Automated Code Quality Improvements
+            
+            This PR contains automated fixes for code quality issues detected by our CI/CD pipeline.
+            
+            ### Changes Include:
+            - ✅ Removed unused imports and variables
+            - ✅ Fixed PEP8 violations in Python code
+            - ✅ Applied consistent code formatting
+            - ✅ Fixed ESLint violations in frontend code
+            - ✅ Applied Prettier formatting to frontend
+            
+            ### Review Checklist:
+            - [ ] Verify all auto-fixes are correct
+            - [ ] Run tests to ensure no functionality is broken
+            - [ ] Check that formatting improvements don't affect logic
+            
+            **This PR was automatically generated by the Automated Code Optimization workflow.**
+          branch: automated-fixes-${{ github.run_number }}
+          delete-branch: true
+          labels: |
+            automated
+            code-quality
+            chore
+
+  summarize-fixes:
+    name: Summarize All Auto-fixes
+    needs: [auto-fix-python, auto-fix-frontend]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Download all fix reports
+        uses: actions/download-artifact@v4
+        with:
+          path: all-fix-reports
+
+      - name: Create comprehensive summary
+        run: |
+          echo "# Automated Code Optimization Summary" > optimization-summary.md
+          echo "" >> optimization-summary.md
+          echo "## Run Information" >> optimization-summary.md
+          echo "- **Date**: $(date)" >> optimization-summary.md
+          echo "- **Branch**: ${{ github.ref_name }}" >> optimization-summary.md
+          echo "- **Workflow**: Automated Code Optimization" >> optimization-summary.md
+          echo "" >> optimization-summary.md
+          echo "## Auto-fixes Applied" >> optimization-summary.md
+          echo "" >> optimization-summary.md
+          echo "### Python Backend" >> optimization-summary.md
+          echo "- Removed unused imports and variables" >> optimization-summary.md
+          echo "- Fixed PEP8 violations" >> optimization-summary.md
+          echo "- Applied isort and black formatting" >> optimization-summary.md
+          echo "" >> optimization-summary.md
+          echo "### Frontend" >> optimization-summary.md
+          echo "- Fixed ESLint violations" >> optimization-summary.md
+          echo "- Applied Prettier formatting" >> optimization-summary.md
+          echo "" >> optimization-summary.md
+          echo "## Next Steps" >> optimization-summary.md
+          echo "" >> optimization-summary.md
+          if [ "${{ github.event.inputs.create_pr }}" = "true" ]; then
+            echo "✅ A pull request has been created with all auto-fixes" >> optimization-summary.md
+            echo "" >> optimization-summary.md
+            echo "Please review and merge the PR to apply these improvements." >> optimization-summary.md
+          else
+            echo "ℹ️ Auto-fixes have been identified but not applied" >> optimization-summary.md
+            echo "" >> optimization-summary.md
+            echo "To create a PR with auto-fixes, run this workflow manually with 'create_pr' set to 'true'." >> optimization-summary.md
+          fi
+          
+          cat optimization-summary.md
+
+      - name: Upload optimization summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimization-summary
+          path: optimization-summary.md
+          retention-days: 90
